@@ -367,7 +367,7 @@ class AdversarialNetwork(nn.Module):
     super(AdversarialNetwork, self).__init__()
     self.ad_layer1 = nn.Linear(in_feature, hidden_size)
     self.ad_layer2 = nn.Linear(hidden_size, hidden_size)
-    self.ad_layer3 = nn.Linear(hidden_size, 1)
+    self.ad_layer3 = nn.Linear(hidden_size, 2)
     self.relu1 = nn.ReLU()
     self.relu2 = nn.ReLU()
     self.dropout1 = nn.Dropout(0.5)
@@ -380,12 +380,13 @@ class AdversarialNetwork(nn.Module):
     self.high = 1.0
     self.max_iter = 10000.0
 
-  def forward(self, x):
+  def forward(self, x, reverse=True):
     if self.training:
         self.iter_num += 1
-    coeff = calc_coeff(self.iter_num, self.high, self.low, self.alpha, self.max_iter)
-    x = x * 1.0
-    x.register_hook(grl_hook(coeff))
+    if reverse:
+        coeff = calc_coeff(self.iter_num, self.high, self.low, self.alpha, self.max_iter)
+        x = x * 1.0
+        x.register_hook(grl_hook(coeff))
     x = self.ad_layer1(x)
     x = self.relu1(x)
     x = self.dropout1(x)
@@ -393,7 +394,7 @@ class AdversarialNetwork(nn.Module):
     x = self.relu2(x)
     x = self.dropout2(x)
     y = self.ad_layer3(x)
-    y = self.sigmoid(y)
+    # y = self.sigmoid(y)
     return y
 
   def output_num(self):

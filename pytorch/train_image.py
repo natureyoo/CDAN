@@ -125,7 +125,7 @@ def train(config):
 
     ## build attacker
     attacked_network = network.AttackedNetwork(base_network, ad_net)
-    atk = torchattacks.PGD(attacked_network, eps=128 / 255, alpha=32 / 255, steps=4)
+    atk = torchattacks.PGD(attacked_network, eps=16 / 255, alpha=8 / 255, steps=4)
 
     ## set optimizer
     optimizer_config = config["optimizer"]
@@ -178,22 +178,32 @@ def train(config):
         inputs_source, labels_source = iter_source.next()
         inputs_target, labels_target = iter_target.next()
         inputs_source, inputs_target, labels_source = inputs_source.cuda(), inputs_target.cuda(), labels_source.cuda()
+
+        # generate attacked source samples
+        adversarial_source = atk(inputs_source, torch.zeros(labels_source.shape[0]).type(torch.LongTensor))
+
         features_source, outputs_source = base_network(inputs_source)
         features_target, outputs_target = base_network(inputs_target)
+        features_adv, outputs_adv = base_network(adversarial_source)
         features = torch.cat((features_source, features_target), dim=0)
         outputs = torch.cat((outputs_source, outputs_target), dim=0)
         softmax_out = nn.Softmax(dim=1)(outputs)
         if config['method'] == 'CDAN+E':           
             entropy = loss.Entropy(softmax_out)
             transfer_loss = loss.CDAN([features, softmax_out], ad_net, entropy, network.calc_coeff(i), random_layer)
-        elif config['method']  == 'CDAN':
+        elif config['method'] == 'CDAN':
             transfer_loss = loss.CDAN([features, softmax_out], ad_net, None, None, random_layer)
-        elif config['method']  == 'DANN':
+        elif config['method'] == 'DANN':
             transfer_loss = loss.DANN(features, ad_net)
+        elif config['method'] == 'ATTACK':
+            transfer_loss = loss.ATTACK(features, ad_net, labels_source.shape[0], labels_target.shape[0])
         else:
             raise ValueError('Method cannot be recognized.')
         classifier_loss = nn.CrossEntropyLoss()(outputs_source, labels_source)
-        total_loss = loss_params["trade_off"] * transfer_loss + classifier_loss
+        classifier_loss_adv = nn.CrossEntropyLoss()(outputs_adv, labels_source)
+        total_loss = loss_params["trade_off"] * transfer_loss + classifier_loss + classifier_loss_adv
+        if i % 100 == 0:
+            print('iter {}\tclass loss on source: {:.6f}\tadv: {:.6f}\tdiscriminator: {:.6f}'.format(i, classifier_loss.item(), classifier_loss_adv.item(), transfer_loss.item()))
         total_loss.backward()
         optimizer.step()
     torch.save(best_model, osp.join(config["output_path"], "best_model.pth.tar"))
@@ -201,7 +211,7 @@ def train(config):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Conditional Domain Adversarial Network')
-    parser.add_argument('--method', type=str, default='CDAN+E', choices=['CDAN', 'CDAN+E', 'DANN'])
+    parser.add_argument('--method', type=str, default='CDAN+E', choices=['CDAN', 'CDAN+E', 'DANN', 'ATTACK'])
     parser.add_argument('--gpu_id', type=str, nargs='?', default='0', help="device id to run")
     parser.add_argument('--net', type=str, default='ResNet50', choices=["ResNet18", "ResNet34", "ResNet50", "ResNet101", "ResNet152", "VGG11", "VGG13", "VGG16", "VGG19", "VGG11BN", "VGG13BN", "VGG16BN", "VGG19BN", "AlexNet"])
     parser.add_argument('--dset', type=str, default='office', choices=['office', 'image-clef', 'visda', 'office-home'], help="The dataset or source dataset used")
