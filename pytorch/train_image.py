@@ -17,6 +17,7 @@ from torch.autograd import Variable
 import random
 import pdb
 import math
+import torchattacks
 
 
 def image_classification_test(loader, model, test_10crop=True):
@@ -115,12 +116,17 @@ def train(config):
         ad_net = network.AdversarialNetwork(config["loss"]["random_dim"], 1024)
     else:
         random_layer = None
-        ad_net = network.AdversarialNetwork(base_network.output_num() * class_num, 1024)
+        # ad_net = network.AdversarialNetwork(base_network.output_num() * class_num, 1024)
+        ad_net = network.AdversarialNetwork(base_network.output_num(), 1024)
     if config["loss"]["random"]:
         random_layer.cuda()
     ad_net = ad_net.cuda()
     parameter_list = base_network.get_parameters() + ad_net.get_parameters()
- 
+
+    ## build attacker
+    attacked_network = network.AttackedNetwork(base_network, ad_net)
+    atk = torchattacks.PGD(attacked_network, eps=128 / 255, alpha=32 / 255, steps=4)
+
     ## set optimizer
     optimizer_config = config["optimizer"]
     optimizer = optimizer_config["type"](parameter_list, \
@@ -195,12 +201,12 @@ def train(config):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Conditional Domain Adversarial Network')
-    parser.add_argument('method', type=str, default='CDAN+E', choices=['CDAN', 'CDAN+E', 'DANN'])
+    parser.add_argument('--method', type=str, default='CDAN+E', choices=['CDAN', 'CDAN+E', 'DANN'])
     parser.add_argument('--gpu_id', type=str, nargs='?', default='0', help="device id to run")
     parser.add_argument('--net', type=str, default='ResNet50', choices=["ResNet18", "ResNet34", "ResNet50", "ResNet101", "ResNet152", "VGG11", "VGG13", "VGG16", "VGG19", "VGG11BN", "VGG13BN", "VGG16BN", "VGG19BN", "AlexNet"])
     parser.add_argument('--dset', type=str, default='office', choices=['office', 'image-clef', 'visda', 'office-home'], help="The dataset or source dataset used")
-    parser.add_argument('--s_dset_path', type=str, default='../../data/office/amazon_31_list.txt', help="The source dataset path list")
-    parser.add_argument('--t_dset_path', type=str, default='../../data/office/webcam_10_list.txt', help="The target dataset path list")
+    parser.add_argument('--s_dset_path', type=str, default='../data/office/amazon_list.txt', help="The source dataset path list")
+    parser.add_argument('--t_dset_path', type=str, default='../data/office/webcam_list.txt', help="The target dataset path list")
     parser.add_argument('--test_interval', type=int, default=500, help="interval of two continuous test phase")
     parser.add_argument('--snapshot_interval', type=int, default=5000, help="interval of two continuous output model")
     parser.add_argument('--output_dir', type=str, default='san', help="output directory of our model (in ../snapshot directory)")

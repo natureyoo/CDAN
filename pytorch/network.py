@@ -400,3 +400,15 @@ class AdversarialNetwork(nn.Module):
     return 1
   def get_parameters(self):
     return [{"params":self.parameters(), "lr_mult":10, 'decay_mult':2}]
+
+
+class AttackedNetwork(nn.Module):
+    def __init__(self, base_network, ad_net):
+        super(AttackedNetwork, self).__init__()
+        self.base_network = base_network
+        self.ad_net = ad_net
+
+    def forward(self, x):
+        output, _ = self.base_network(x)
+        output = self.ad_net(output)
+        return output
