@@ -147,6 +147,8 @@ def train(config):
     len_train_source = len(dset_loaders["source"])
     len_train_target = len(dset_loaders["target"])
     transfer_loss_value = classifier_loss_value = total_loss_value = 0.0
+    mean = torch.from_numpy(np.array([0.485, 0.456, 0.406])).view(1, -1, 1, 1).cuda()
+    std = torch.from_numpy(np.array([0.229, 0.224, 0.225])).view(1, -1, 1, 1).cuda()
     best_acc = 0.0
     for i in range(config["num_iterations"]):
         if i % config["test_interval"] == config["test_interval"] - 1:
@@ -181,10 +183,19 @@ def train(config):
 
         # generate attacked source samples
         adversarial_source = atk(inputs_source, torch.zeros(labels_source.shape[0]).type(torch.LongTensor))
+        import pdb;
+        # mixup domain
+        inputs_source_unnorm = (inputs_source * std) + mean
+        inputs_target_unnorm = (inputs_target * std) + mean
+        mix_ratio = torch.from_numpy(np.round_(np.random.beta(2.0, 2.0, size=labels_source.shape[0]), 2)).view(-1, 1, 1, 1).cuda()
+        inputs_mix = mix_ratio * inputs_source_unnorm + (1 - mix_ratio) * inputs_target_unnorm
+        inputs_mix = ((inputs_mix - mean) / std).double()
+        labels_mix = torch.cat((mix_ratio, 1 - mix_ratio), 1).cuda()
 
-        features_source, outputs_source = base_network(inputs_source)
-        features_target, outputs_target = base_network(inputs_target)
-        features_adv, outputs_adv = base_network(adversarial_source)
+        features_source, outputs_source = base_network(inputs_source.float())
+        features_target, outputs_target = base_network(inputs_target.float())
+        features_adv, outputs_adv = base_network(adversarial_source.float())
+        features_mix, _ = base_network(inputs_mix.float())
         features = torch.cat((features_source, features_target), dim=0)
         outputs = torch.cat((outputs_source, outputs_target), dim=0)
         softmax_out = nn.Softmax(dim=1)(outputs)
@@ -196,14 +207,18 @@ def train(config):
         elif config['method'] == 'DANN':
             transfer_loss = loss.DANN(features, ad_net)
         elif config['method'] == 'ATTACK':
-            transfer_loss = loss.ATTACK(features, ad_net, labels_source.shape[0], labels_target.shape[0])
+            labels_combined = torch.cat((torch.zeros(labels_source.shape[0]).type(torch.LongTensor), torch.zeros(labels_target.shape[0]).type(torch.LongTensor)), 0).cuda()
+            transfer_loss = loss.ATTACK(features, ad_net, labels_combined)
+            transfer_loss_mix = loss.ATTACK(features_mix, ad_net, labels_mix)
+
         else:
             raise ValueError('Method cannot be recognized.')
         classifier_loss = nn.CrossEntropyLoss()(outputs_source, labels_source)
         classifier_loss_adv = nn.CrossEntropyLoss()(outputs_adv, labels_source)
-        total_loss = loss_params["trade_off"] * transfer_loss + classifier_loss + classifier_loss_adv
+        total_loss = loss_params["trade_off"] * (transfer_loss + transfer_loss_mix) + classifier_loss + classifier_loss_adv
+        pdb.set_trace()
         if i % 100 == 0:
-            print('iter {}\tclass loss on source: {:.6f}\tadv: {:.6f}\tdiscriminator: {:.6f}'.format(i, classifier_loss.item(), classifier_loss_adv.item(), transfer_loss.item()))
+            print('iter {}\tclass loss on source: {:.6f}\tadv: {:.6f}\tdisc on org: {:.6f}\tmix: {:.6f}'.format(i, classifier_loss.item(), classifier_loss_adv.item(), transfer_loss.item(), transfer_loss_mix.item()))
         total_loss.backward()
         optimizer.step()
     torch.save(best_model, osp.join(config["output_path"], "best_model.pth.tar"))

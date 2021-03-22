@@ -52,7 +52,10 @@ def DANN(features, ad_net):
     return nn.BCELoss()(ad_out, dc_target)
 
 
-def ATTACK(features, ad_net, s, t):
+def ATTACK(features, ad_net, labels):
     ad_out = ad_net(features, reverse=False)
-    labels = torch.cat((torch.zeros(s).type(torch.LongTensor), torch.zeros(t).type(torch.LongTensor)), 0).cuda()
-    return nn.CrossEntropyLoss()(ad_out, labels)
+    if len(labels.shape) == 1:
+        return nn.CrossEntropyLoss()(ad_out, labels)
+    else:
+        ad_out = nn.Softmax(dim=1)(ad_out)
+        return nn.KLDivLoss(reduction='batchmean')(ad_out, labels)
